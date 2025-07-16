@@ -96,6 +96,9 @@ BLOCK_A = [
 with open(os.path.join(os.path.dirname(__file__), "questions_b.json"), "r", encoding="utf‑8") as f:
     BLOCK_B: Dict[str, List[str]] = json.load(f)  # keys "B1", "B2", … "B7"
 
+with open(os.path.join(os.path.dirname(__file__), "interpretations.json"), "r", encoding="utf‑8") as f:
+    INTERPRETATIONS: Dict[str, str] = json.load(f)
+
 BLOCK_C = [
     "Я НИКОГДА не злюсь на людей.",
     "У меня не бывает сомнений в собственных решениях.",
@@ -248,7 +251,13 @@ async def show_result(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     sess: Session = ctx.user_data["sess"]
     res = sess.compute()
     stage = res["stage"]
-    msg = ["*Ваш текущий этап:* `" + str(stage) + "`", "\n*Суммы по блокам:*", "```"]
+    msg = ["*Ваш текущий этап:* `" + str(stage) + "`"]
+    
+    # Добавляем расшифровку
+    interpretation_text = INTERPRETATIONS.get(str(stage), "Интерпретация для вашего этапа не найдена.")
+    msg.append(f"\n*{interpretation_text}*")
+
+    msg.extend(["\n*Суммы по блокам:*", "```"])
     for k, v in res["sums"].items():
         msg.append(f"{k}: {v}")
     msg.append("```")
