@@ -344,37 +344,37 @@ async def d_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def end_conv(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     text = "Тест завершён. Благодарю за искренность."
-    admin_username = config.get("ADMIN_USERNAME")
     
     keyboard = [
         [Btn("Пройти тест еще раз", callback_data="restart")],
-        [Btn("Подписаться на канал", url="https://t.me/mtgates")]
+        [Btn("Записаться на консультацию", url="http://t.me/mtgates")],
+        [Btn("Подписаться на канал", url="http://t.me/wakeupspirit")]
     ]
-    
-    if admin_username and admin_username != "your_telegram_username_here":
-        keyboard.append([Btn("Записаться на консультацию", url=f"https://t.me/{admin_username}")])
-
     markup = Markup(keyboard)
 
-    # Effective way to reply to either a callback or a message
+    # Если пользователь нажал кнопку (например, "Завершить"), 
+    # мы отвечаем на колбэк, убираем старые кнопки и отправляем НОВОЕ сообщение.
     if update.callback_query:
-        await update.callback_query.edit_message_text(text, reply_markup=markup)
+        # Убираем "часики" на кнопке
+        await update.callback_query.answer()
+        # Убираем клавиатуру с предыдущего сообщения (с результатами)
+        await update.callback_query.edit_message_reply_markup(reply_markup=None)
+        # Отправляем новое сообщение с финальными кнопками
+        await update.effective_message.reply_text(text, reply_markup=markup)
     else:
+        # Эта ветка выполняется после завершения интервью Блока D
         await update.message.reply_text(text, reply_markup=markup)
 
     return ConversationHandler.END
 
 async def cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     text = "Диагностика прервана."
-    admin_username = config.get("ADMIN_USERNAME")
     
     keyboard = [
         [Btn("Пройти тест еще раз", callback_data="restart")],
-        [Btn("Подписаться на канал", url="https://t.me/mtgates")]
+        [Btn("Записаться на консультацию", url="http://t.me/mtgates")],
+        [Btn("Подписаться на канал", url="http://t.me/wakeupspirit")]
     ]
-
-    if admin_username and admin_username != "your_telegram_username_here":
-        keyboard.append([Btn("Записаться на консультацию", url=f"https://t.me/{admin_username}")])
         
     markup = Markup(keyboard)
     
