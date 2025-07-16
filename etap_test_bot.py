@@ -29,6 +29,7 @@ from telegram import (
     Update, InlineKeyboardButton as Btn, InlineKeyboardMarkup as Markup,
     ReplyKeyboardRemove,
 )
+from telegram.error import BadRequest
 from telegram.ext import (
     Application, ContextTypes, CommandHandler, CallbackQueryHandler,
     ConversationHandler, MessageHandler, filters,
@@ -48,13 +49,28 @@ except FileNotFoundError:
     log.critical("FATAL: config.json not found. Please create it from config.json.example")
     raise SystemExit("config.json not found.")
 except (KeyError, json.JSONDecodeError):
-    log.critical("FATAL: config.json is malformed or missing BOT_TOKEN.")
+    # Use basic logging if file-based logging isn't set up yet
+    logging.basicConfig()
+    logging.critical("FATAL: config.json is malformed or missing BOT_TOKEN.")
     raise SystemExit("Invalid config.json file.")
 # ---
 
-logging.basicConfig(level=logging.INFO,
-                    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+# --- Logging Setup ---
+log_formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+log_file = os.path.join(os.path.dirname(__file__), "bot.log")
+
+# Setup handlers
+file_handler = logging.FileHandler(log_file, encoding="utf-8")
+file_handler.setFormatter(log_formatter)
+
+stream_handler = logging.StreamHandler()
+stream_handler.setFormatter(log_formatter)
+
+# Configure root logger
+logging.basicConfig(level=logging.INFO, handlers=[file_handler, stream_handler])
+
 log = logging.getLogger("EtapBot")
+# ---
 
 # ────────────────────────────────────────────────────────────────────────────
 #  CONSTANTS & QUESTIONS
@@ -262,7 +278,12 @@ async def d_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         # await generate_and_send_pdf(update, ctx)
 
         if CHAT_ID_ADMIN:
-            await ctx.bot.send_message(CHAT_ID_ADMIN, f"#Etap7D ответы D от {update.effective_user.id}:\n" + json.dumps(sess.d_answers, ensure_ascii=False, indent=2))
+            try:
+                await ctx.bot.send_message(CHAT_ID_ADMIN, f"#Etap7D ответы D от {update.effective_user.id}:\n" + json.dumps(sess.d_answers, ensure_ascii=False, indent=2))
+            except BadRequest:
+                log.error(f"Could not send message to CHAT_ID_ADMIN {CHAT_ID_ADMIN}. "
+                          f"The chat was not found. Please ensure the admin has started the bot.")
+
         return await end_conv(update, ctx)
         
     await update.message.reply_text(f"D{sess.d_idx+1}/{len(BLOCK_D)}\n{BLOCK_D[sess.d_idx]}")
