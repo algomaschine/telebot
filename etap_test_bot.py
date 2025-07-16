@@ -24,14 +24,6 @@ from __future__ import annotations
 import os, json, logging, asyncio, datetime as dt
 from typing import Dict, Any, List
 from collections import defaultdict
-from io import BytesIO
-
-from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.enums import TA_JUSTIFY, TA_CENTER, TA_LEFT
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
 
 from telegram import (
     Update, InlineKeyboardButton as Btn, InlineKeyboardMarkup as Markup,
@@ -179,10 +171,17 @@ class Session:
 
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ctx.user_data["sess"] = Session()
-    await update.message.reply_text(
-        "Привет! Это диагностика *Этап‑Тест 7D*. Ответьте честно, время ≈30 мин.\n\nНачнём?", parse_mode="Markdown",
-        reply_markup=Markup([[Btn("🚀 Поехали", callback_data="start_A")]])
-    )
+    text = "Привет! Это диагностика *Этап‑Тест 7D*. Ответьте честно, время ≈30 мин.\n\nНачнём?"
+    markup = Markup([[Btn("🚀 Поехали", callback_data="start_A")]])
+
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.message.reply_text(text, parse_mode="Markdown", reply_markup=markup)
+    else:
+        await update.message.reply_text(
+            text, parse_mode="Markdown",
+            reply_markup=markup
+        )
     return A
 
 async def a_block(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -258,20 +257,63 @@ async def ask_c(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def show_result(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     sess: Session = ctx.user_data["sess"]
     res = sess.compute()
-    stage = res["stage"]
-    msg = ["*Ваш текущий этап:* `" + str(stage) + "`", "\n*Суммы по блокам:*", "```"]
-    for k, v in res["sums"].items():
-        msg.append(f"{k}: {v}")
-    msg.append("```")
-    if res["distortion"] >= 4:
-        msg.append("⚠️ Вы отметили слишком много «идеальных» ответов. Повторите тест позже для точности.")
+    stage = str(res["stage"])
     
-    msg.append("\nЧтобы получить полную расшифровку и персональные рекомендации, пройдите короткое интервью из 10 вопросов.")
+    # Для определения уровня (low/medium/high) используется балл того блока, который соответствует определённому этапу.
+    # Для этапа 0 балл не имеет значения, т.к. там только один уровень.
+    stage_score = res["sums"].get(f"B{stage}", 0) if stage != "0" else 0
 
+    stage_data = INTERPRETATIONS.get(stage)
+    if not stage_data:
+        await (update.callback_query.edit_message_text if update.callback_query else update.message.reply_text)(
+            "Не удалось найти интерпретацию для вашего этапа. Пожалуйста, свяжитесь с администратором."
+        )
+        return ConversationHandler.END
+
+    level_data = get_level_interpretation(stage_data, stage_score)
+    if not level_data:
+        await (update.callback_query.edit_message_text if update.callback_query else update.message.reply_text)(
+            "Не удалось определить ваш уровень внутри этапа. Пожалуйста, свяжитесь с администратором."
+        )
+        return ConversationHandler.END
+
+    # --- Формирование сообщения с результатами ---
+    msg = []
+    msg.append(f"<b>Ваш основной этап: {stage_data['title']}</b>")
+    if level_data.get('title'):  # У Этапа 0 может не быть заголовка уровня
+        msg.append(f"<b>Уровень освоения: {level_data['title']}</b>")
+    msg.append("")
+    msg.append(f"<i>{level_data['description']}</i>")
+
+    if level_data.get('recommendations'):
+        msg.append("")
+        msg.append("<b>Рекомендации для практики:</b>")
+        for rec in level_data['recommendations']:
+            msg.append(f"• {rec}")
+
+    msg.append("\n" + ("─" * 20))
+    msg.append("\n<b>Детальные результаты:</b>")
+    
+    sums_text = []
+    for k, v in res["sums"].items():
+        sums_text.append(f"{k}: {v}")
+    msg.append("Суммы баллов по блокам: " + f"<code>{', '.join(sums_text)}</code>")
+    msg.append(f"Коэффициент искажения: {res['distortion']}")
+
+    if res["distortion"] >= 4:
+        msg.append("\n⚠️ <i>Вы отметили много «идеальных» ответов. Для точности результата рекомендуется повторить тест позже, отвечая более искренне.</i>")
+
+    msg.append("\n\nЧтобы помочь в исследовании, вы можете пройти короткое анонимное интервью из 10 вопросов.")
+
+    # Отправляем сообщение
+    # Используем HTML для форматирования
     await (update.callback_query.edit_message_text if update.callback_query else update.message.reply_text)(
-        "\n".join(msg), parse_mode="Markdown", reply_markup=Markup([[Btn("➕ Пройти интервью (Блок D)", callback_data="startD"), Btn("Завершить", callback_data="done")]])
+        "\n".join(msg),
+        parse_mode="HTML",
+        reply_markup=Markup([[Btn("➕ Пройти интервью (Блок D)", callback_data="startD"), Btn("Завершить", callback_data="done")]])
     )
     return RESULT
+
 
 async def start_d(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     sess: Session = ctx.user_data["sess"]
@@ -286,9 +328,7 @@ async def d_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     sess.d_idx += 1
     
     if sess.d_idx >= len(BLOCK_D):
-        await update.message.reply_text("Спасибо! Вы завершили интервью. Генерирую ваш персональный PDF-отчёт...")
-        
-        await generate_and_send_pdf(update, ctx)
+        await update.message.reply_text("Спасибо! Вы завершили интервью.")
 
         if CHAT_ID_ADMIN:
             try:
@@ -303,11 +343,42 @@ async def d_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     return D
 
 async def end_conv(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.effective_message.reply_text("Опрос завершён. Благодарю за искренность.", reply_markup=ReplyKeyboardRemove())
+    text = "Тест завершён. Благодарю за искренность."
+    admin_username = config.get("ADMIN_USERNAME")
+    
+    keyboard = [
+        [Btn("Пройти тест еще раз", callback_data="restart")],
+        [Btn("Подписаться на канал", url="https://t.me/mtgates")]
+    ]
+    
+    if admin_username and admin_username != "your_telegram_username_here":
+        keyboard.append([Btn("Записаться на консультацию", url=f"https://t.me/{admin_username}")])
+
+    markup = Markup(keyboard)
+
+    # Effective way to reply to either a callback or a message
+    if update.callback_query:
+        await update.callback_query.edit_message_text(text, reply_markup=markup)
+    else:
+        await update.message.reply_text(text, reply_markup=markup)
+
     return ConversationHandler.END
 
 async def cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.effective_message.reply_text("Диагностика прервана.", reply_markup=ReplyKeyboardRemove())
+    text = "Диагностика прервана."
+    admin_username = config.get("ADMIN_USERNAME")
+    
+    keyboard = [
+        [Btn("Пройти тест еще раз", callback_data="restart")],
+        [Btn("Подписаться на канал", url="https://t.me/mtgates")]
+    ]
+
+    if admin_username and admin_username != "your_telegram_username_here":
+        keyboard.append([Btn("Записаться на консультацию", url=f"https://t.me/{admin_username}")])
+        
+    markup = Markup(keyboard)
+    
+    await update.effective_message.reply_text(text, reply_markup=markup)
     return ConversationHandler.END
 
 def get_level_interpretation(stage_data, score):
@@ -318,83 +389,6 @@ def get_level_interpretation(stage_data, score):
             return level_info
     return None
 
-async def generate_and_send_pdf(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    sess: Session = ctx.user_data["sess"]
-    res = sess.compute()
-    stage = str(res["stage"])
-    stage_score = res["sums"].get(f"B{stage}", 0)
-    
-    stage_data = INTERPRETATIONS.get(stage)
-    if not stage_data:
-        await update.message.reply_text("Не удалось найти интерпретацию для вашего этапа.")
-        return
-
-    level_data = get_level_interpretation(stage_data, stage_score)
-    if not level_data:
-        await update.message.reply_text("Не удалось определить ваш уровень внутри этапа.")
-        return
-
-    buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=72, leftMargin=72, topMargin=72, bottomMargin=18)
-    
-    # Регистрация шрифта (если он есть)
-    try:
-        pdfmetrics.registerFont(TTFont('DejaVu', 'DejaVuSans.ttf'))
-        main_font = 'DejaVu'
-    except:
-        log.warning("DejaVuSans.ttf font not found. Using default Helvetica.")
-        main_font = 'Helvetica'
-    
-    styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(name='Justify', alignment=TA_JUSTIFY, fontName=main_font))
-    styles.add(ParagraphStyle(name='Center', alignment=TA_CENTER, fontName=main_font, fontSize=20))
-    styles.add(ParagraphStyle(name='LeftBold', alignment=TA_LEFT, fontName=main_font, fontSize=12))
-
-    story = []
-    
-    # Title
-    story.append(Paragraph("Результаты теста «Этап-Тест 7D»", styles['Center']))
-    story.append(Spacer(1, 24))
-
-    # Stage and Level
-    story.append(Paragraph(f"<b>Ваш основной этап: {stage_data['title']}</b>", styles['Justify']))
-    story.append(Paragraph(f"<b>Уровень освоения: {level_data['title']}</b>", styles['Justify']))
-    story.append(Spacer(1, 12))
-    
-    # Description
-    story.append(Paragraph("<b>Описание вашего состояния:</b>", styles['Justify']))
-    story.append(Paragraph(level_data['description'], styles['Justify']))
-    story.append(Spacer(1, 12))
-    
-    # Recommendations
-    story.append(Paragraph("<b>Рекомендации для практики:</b>", styles['Justify']))
-    for rec in level_data['recommendations']:
-        story.append(Paragraph(f"• {rec}", styles['Justify']))
-    story.append(Spacer(1, 24))
-    
-    # Raw Scores
-    story.append(PageBreak())
-    story.append(Paragraph("<b>Детальные результаты</b>", styles['LeftBold']))
-    story.append(Spacer(1, 12))
-    story.append(Paragraph("Суммы баллов по блокам:", styles['Justify']))
-    for k, v in res["sums"].items():
-        story.append(Paragraph(f"{k}: {v}", styles['Justify']))
-    story.append(Paragraph(f"Коэффициент искажения: {res['distortion']}", styles['Justify']))
-    story.append(Spacer(1, 24))
-    
-    # Block D Answers
-    story.append(Paragraph("<b>Ваши ответы на вопросы интервью (Блок D):</b>", styles['LeftBold']))
-    story.append(Spacer(1, 12))
-    for i, answer in enumerate(sess.d_answers):
-        story.append(Paragraph(f"<b>{i+1}. {BLOCK_D[i]}</b>", styles['Justify']))
-        story.append(Paragraph(answer, styles['Justify']))
-        story.append(Spacer(1, 12))
-    
-    doc.build(story)
-    
-    buffer.seek(0)
-    await update.message.reply_document(document=buffer, filename=f"Etap7D_Report_{update.effective_user.id}.pdf")
-
 # ────────────────────────────────────────────────────────────────────────────
 #  MAIN
 # ────────────────────────────────────────────────────────────────────────────
@@ -402,7 +396,10 @@ async def generate_and_send_pdf(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 def main():
     app = Application.builder().token(TOKEN).build()
     conv = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
+        entry_points=[
+            CommandHandler("start", start),
+            CallbackQueryHandler(start, pattern="^restart$")
+        ],
         states={
             A: [CallbackQueryHandler(a_block, pattern="^(start_A|ansA).*" )],
             B: [CallbackQueryHandler(ask_b, pattern="^ansB.*")],
