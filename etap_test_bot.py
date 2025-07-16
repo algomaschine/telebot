@@ -33,10 +33,24 @@ from telegram.ext import (
     Application, ContextTypes, CommandHandler, CallbackQueryHandler,
     ConversationHandler, MessageHandler, filters,
 )
-from dotenv import load_dotenv
-load_dotenv()
-TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID_ADMIN = int(os.getenv("CHAT_ID_ADMIN", "0")) or None
+# from dotenv import load_dotenv
+# load_dotenv()
+# TOKEN = os.getenv("BOT_TOKEN")
+# CHAT_ID_ADMIN = int(os.getenv("CHAT_ID_ADMIN", "0")) or None
+
+# --- Load config from JSON
+try:
+    with open(os.path.join(os.path.dirname(__file__), "config.json"), "r") as f:
+        config = json.load(f)
+    TOKEN = config["BOT_TOKEN"]
+    CHAT_ID_ADMIN = int(config.get("CHAT_ID_ADMIN", 0)) or None
+except FileNotFoundError:
+    log.critical("FATAL: config.json not found. Please create it from config.json.example")
+    raise SystemExit("config.json not found.")
+except (KeyError, json.JSONDecodeError):
+    log.critical("FATAL: config.json is malformed or missing BOT_TOKEN.")
+    raise SystemExit("Invalid config.json file.")
+# ---
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -299,6 +313,6 @@ def main():
     app.run_polling()
 
 if __name__ == "__main__":
-    if not TOKEN:
-        raise SystemExit("BOT_TOKEN env var missing")
+    if not TOKEN or TOKEN == "PASTE_YOUR_BOT_TOKEN_HERE":
+        raise SystemExit("BOT_TOKEN is not defined in config.json. Please edit the file.")
     main()
